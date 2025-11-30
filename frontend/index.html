@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DAG Task Queue - Redis Stream Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 2.5rem;
+            background: linear-gradient(90deg, #00d9ff, #00ff88);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 40px;
+        }
+
+        .dag-cases {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .dag-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 24px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .dag-card:hover {
+            transform: translateY(-5px);
+            border-color: rgba(0, 217, 255, 0.5);
+            box-shadow: 0 10px 40px rgba(0, 217, 255, 0.2);
+        }
+
+        .dag-card h3 {
+            color: #00d9ff;
+            margin-bottom: 15px;
+            font-size: 1.3rem;
+        }
+
+        .dag-visual {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            text-align: center;
+            font-family: monospace;
+            font-size: 1.2rem;
+        }
+
+        .dag-visual .node {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            line-height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #00d9ff, #0066ff);
+            margin: 0 5px;
+            font-weight: bold;
+        }
+
+        .dag-visual .arrow {
+            color: #00ff88;
+            margin: 0 5px;
+        }
+
+        .dag-card p {
+            color: #aaa;
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            background: linear-gradient(90deg, #00d9ff, #0066ff);
+            color: #fff;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .submit-btn:hover {
+            transform: scale(1.02);
+            box-shadow: 0 5px 20px rgba(0, 217, 255, 0.4);
+        }
+
+        .submit-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .jobs-section {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 24px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .jobs-section h2 {
+            color: #00ff88;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .refresh-btn {
+            padding: 8px 16px;
+            border: 1px solid #00ff88;
+            border-radius: 6px;
+            background: transparent;
+            color: #00ff88;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+
+        .refresh-btn:hover {
+            background: rgba(0, 255, 136, 0.1);
+        }
+
+        .jobs-list {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .job-item {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            padding: 16px;
+            border-left: 4px solid #666;
+        }
+
+        .job-item.completed {
+            border-left-color: #00ff88;
+        }
+
+        .job-item.processing {
+            border-left-color: #ffaa00;
+        }
+
+        .job-item.queued {
+            border-left-color: #00d9ff;
+        }
+
+        .job-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .job-id {
+            font-family: monospace;
+            color: #888;
+            font-size: 0.85rem;
+        }
+
+        .job-status {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .job-status.completed {
+            background: rgba(0, 255, 136, 0.2);
+            color: #00ff88;
+        }
+
+        .job-status.processing {
+            background: rgba(255, 170, 0, 0.2);
+            color: #ffaa00;
+        }
+
+        .job-status.queued {
+            background: rgba(0, 217, 255, 0.2);
+            color: #00d9ff;
+        }
+
+        .job-type {
+            color: #fff;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .task-progress {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .task-badge {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-family: monospace;
+        }
+
+        .task-badge.pending {
+            background: rgba(136, 136, 136, 0.3);
+            color: #888;
+        }
+
+        .task-badge.running {
+            background: rgba(255, 170, 0, 0.3);
+            color: #ffaa00;
+        }
+
+        .task-badge.completed {
+            background: rgba(0, 255, 136, 0.3);
+            color: #00ff88;
+        }
+
+        .no-jobs {
+            text-align: center;
+            color: #666;
+            padding: 40px;
+        }
+
+        .queue-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #00d9ff;
+        }
+
+        .stat-label {
+            color: #888;
+            font-size: 0.9rem;
+            margin-top: 5px;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 16px 24px;
+            border-radius: 8px;
+            background: #00ff88;
+            color: #000;
+            font-weight: bold;
+            transform: translateX(150%);
+            transition: transform 0.3s ease;
+            z-index: 1000;
+        }
+
+        .toast.show {
+            transform: translateX(0);
+        }
+
+        .toast.error {
+            background: #ff4444;
+            color: #fff;
+        }
+
+        /* SSE Connection Status */
+        .sse-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sse-status.connected {
+            background: rgba(0, 255, 136, 0.2);
+            color: #00ff88;
+            border: 1px solid #00ff88;
+        }
+
+        .sse-status.disconnected {
+            background: rgba(255, 68, 68, 0.2);
+            color: #ff4444;
+            border: 1px solid #ff4444;
+        }
+
+        .sse-status .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .sse-status.connected .dot {
+            background: #00ff88;
+        }
+
+        .sse-status.disconnected .dot {
+            background: #ff4444;
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Notification Panel */
+        .notification-panel {
+            position: fixed;
+            top: 70px;
+            right: 20px;
+            width: 320px;
+            max-height: 400px;
+            overflow-y: auto;
+            background: rgba(22, 33, 62, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 16px;
+            z-index: 999;
+        }
+
+        .notification-panel h3 {
+            color: #00d9ff;
+            margin-bottom: 12px;
+            font-size: 0.9rem;
+        }
+
+        .notification-item {
+            background: rgba(0, 255, 136, 0.1);
+            border-left: 3px solid #00ff88;
+            padding: 10px;
+            margin-bottom: 8px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .notification-item .time {
+            color: #666;
+            font-size: 0.75rem;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>DAG Task Queue</h1>
+        <p class="subtitle">Redis Stream + Consumer Group Demo</p>
+
+        <div class="queue-stats" id="queueStats">
+            <div class="stat-card">
+                <div class="stat-value" id="pendingCount">-</div>
+                <div class="stat-label">Pending Tasks</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="consumerCount">-</div>
+                <div class="stat-label">Active Workers</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="totalJobs">-</div>
+                <div class="stat-label">Total Jobs</div>
+            </div>
+        </div>
+
+        <div class="dag-cases">
+            <div class="dag-card">
+                <h3>Case 1: Sequential A → B → C</h3>
+                <div class="dag-visual">
+                    <span class="node">A</span>
+                    <span class="arrow">→</span>
+                    <span class="node">B</span>
+                    <span class="arrow">→</span>
+                    <span class="node">C</span>
+                </div>
+                <p>순차 실행: A 완료 후 B 실행, B 완료 후 C 실행</p>
+                <button class="submit-btn" onclick="submitDAG('sequential_abc')">
+                    Submit Sequential DAG
+                </button>
+            </div>
+
+            <div class="dag-card">
+                <h3>Case 2: Skip B (A → C)</h3>
+                <div class="dag-visual">
+                    <span class="node">A</span>
+                    <span class="arrow">→</span>
+                    <span class="node">C</span>
+                </div>
+                <p>B 스킵: A 완료 후 바로 C 실행 (조건부 스킵)</p>
+                <button class="submit-btn" onclick="submitDAG('skip_b')">
+                    Submit Skip-B DAG
+                </button>
+            </div>
+
+            <div class="dag-card">
+                <h3>Case 3: Parallel A,B → C</h3>
+                <div class="dag-visual">
+                    <span class="node">A</span>
+                    <span class="arrow" style="writing-mode: vertical-rl;">↘</span>
+                    <span class="node">C</span>
+                    <span class="arrow" style="writing-mode: vertical-rl;">↗</span>
+                    <span class="node">B</span>
+                </div>
+                <p>병렬 실행: A와 B 동시 실행, 둘 다 완료 후 C 실행</p>
+                <button class="submit-btn" onclick="submitDAG('parallel_ab')">
+                    Submit Parallel DAG
+                </button>
+            </div>
+        </div>
+
+        <div class="jobs-section">
+            <h2>
+                Recent Jobs
+                <button class="refresh-btn" onclick="loadJobs()">Refresh</button>
+            </h2>
+            <div class="jobs-list" id="jobsList">
+                <div class="no-jobs">No jobs yet. Submit a DAG to get started!</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <!-- SSE Status Indicator -->
+    <div class="sse-status disconnected" id="sseStatus">
+        <span class="dot"></span>
+        <span id="sseStatusText">Disconnected</span>
+    </div>
+
+    <!-- Real-time Notification Panel -->
+    <div class="notification-panel" id="notificationPanel">
+        <h3>Real-time Notifications (SSE)</h3>
+        <div id="notifications">
+            <div style="color: #666; font-size: 0.8rem;">Waiting for notifications...</div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+
+        function showToast(message, isError = false) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'toast show' + (isError ? ' error' : '');
+            setTimeout(() => {
+                toast.className = 'toast';
+            }, 3000);
+        }
+
+        async function submitDAG(dagType) {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = 'Submitting...';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/dag/submit`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ dag_type: dagType }),
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to submit DAG');
+                }
+
+                const data = await response.json();
+                showToast(`Job submitted: ${data.job_id.slice(0, 8)}...`);
+                loadJobs();
+            } catch (error) {
+                showToast('Failed to submit job: ' + error.message, true);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = btn.textContent.replace('Submitting...', 'Submit');
+                setTimeout(() => {
+                    btn.textContent = getButtonText(dagType);
+                }, 100);
+            }
+        }
+
+        function getButtonText(dagType) {
+            const texts = {
+                'sequential_abc': 'Submit Sequential DAG',
+                'skip_b': 'Submit Skip-B DAG',
+                'parallel_ab': 'Submit Parallel DAG'
+            };
+            return texts[dagType] || 'Submit';
+        }
+
+        async function loadJobs() {
+            try {
+                const response = await fetch(`${API_BASE}/api/dag/jobs`);
+                if (!response.ok) throw new Error('Failed to load jobs');
+
+                const data = await response.json();
+                renderJobs(data.jobs);
+            } catch (error) {
+                console.error('Failed to load jobs:', error);
+            }
+        }
+
+        async function loadQueueStats() {
+            try {
+                const response = await fetch(`${API_BASE}/api/queue/stats`);
+                if (!response.ok) throw new Error('Failed to load stats');
+
+                const data = await response.json();
+                document.getElementById('pendingCount').textContent = data.pending || 0;
+                document.getElementById('consumerCount').textContent = data.consumers || 0;
+            } catch (error) {
+                console.error('Failed to load queue stats:', error);
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/api/dag/jobs`);
+                if (!response.ok) throw new Error('Failed to load jobs');
+                const data = await response.json();
+                document.getElementById('totalJobs').textContent = data.jobs?.length || 0;
+            } catch (error) {
+                console.error('Failed to load job count:', error);
+            }
+        }
+
+        function renderJobs(jobs) {
+            const container = document.getElementById('jobsList');
+
+            if (!jobs || jobs.length === 0) {
+                container.innerHTML = '<div class="no-jobs">No jobs yet. Submit a DAG to get started!</div>';
+                return;
+            }
+
+            container.innerHTML = jobs.map(job => `
+                <div class="job-item ${job.status}">
+                    <div class="job-header">
+                        <span class="job-id">${job.job_id}</span>
+                        <span class="job-status ${job.status}">${job.status}</span>
+                    </div>
+                    <div class="job-type">DAG Type: ${formatDagType(job.dag_type)}</div>
+                    <div class="task-progress">
+                        ${renderTaskBadges(job.tasks)}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function formatDagType(type) {
+            const names = {
+                'sequential_abc': 'Sequential (A→B→C)',
+                'skip_b': 'Skip B (A→C)',
+                'parallel_ab': 'Parallel (A,B→C)'
+            };
+            return names[type] || type;
+        }
+
+        function renderTaskBadges(tasks) {
+            if (!tasks) return '';
+            return Object.entries(tasks)
+                .map(([task, status]) => `<span class="task-badge ${status}">Task ${task}: ${status}</span>`)
+                .join('');
+        }
+
+        // Initial load
+        loadJobs();
+        loadQueueStats();
+
+        // Auto-refresh every 2 seconds
+        setInterval(() => {
+            loadJobs();
+            loadQueueStats();
+        }, 2000);
+
+        // ============================================
+        // SSE (Server-Sent Events) Connection
+        // ============================================
+        const NOTIFIER_URL = 'http://localhost:8001';
+        let eventSource = null;
+        const notifications = [];
+        const MAX_NOTIFICATIONS = 10;
+
+        function updateSSEStatus(connected) {
+            const statusEl = document.getElementById('sseStatus');
+            const statusText = document.getElementById('sseStatusText');
+
+            if (connected) {
+                statusEl.className = 'sse-status connected';
+                statusText.textContent = 'Live';
+            } else {
+                statusEl.className = 'sse-status disconnected';
+                statusText.textContent = 'Disconnected';
+            }
+        }
+
+        function addNotification(event) {
+            const container = document.getElementById('notifications');
+            const time = new Date().toLocaleTimeString();
+
+            // Add to beginning
+            notifications.unshift({ event, time });
+
+            // Keep only last N notifications
+            if (notifications.length > MAX_NOTIFICATIONS) {
+                notifications.pop();
+            }
+
+            // Render
+            container.innerHTML = notifications.map(n => `
+                <div class="notification-item">
+                    <div><strong>Job Completed!</strong></div>
+                    <div>ID: ${n.event.job_id?.slice(0, 8)}...</div>
+                    <div>Type: ${formatDagType(n.event.dag_type)}</div>
+                    <div class="time">${n.time}</div>
+                </div>
+            `).join('');
+
+            // Show toast
+            showToast(`Job ${event.job_id?.slice(0, 8)}... completed!`);
+
+            // Refresh job list
+            loadJobs();
+        }
+
+        function connectSSE() {
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            console.log('[SSE] Connecting to notifier...');
+            eventSource = new EventSource(`${NOTIFIER_URL}/events`);
+
+            eventSource.onopen = () => {
+                console.log('[SSE] Connected!');
+                updateSSEStatus(true);
+            };
+
+            eventSource.addEventListener('connected', (e) => {
+                console.log('[SSE] Server acknowledged connection');
+            });
+
+            eventSource.addEventListener('job_completed', (e) => {
+                console.log('[SSE] Job completed event:', e.data);
+                try {
+                    const event = JSON.parse(e.data);
+                    addNotification(event);
+                } catch (err) {
+                    console.error('[SSE] Failed to parse event:', err);
+                }
+            });
+
+            eventSource.addEventListener('keepalive', (e) => {
+                console.log('[SSE] Keepalive received');
+            });
+
+            eventSource.onerror = (e) => {
+                console.error('[SSE] Connection error:', e);
+                updateSSEStatus(false);
+
+                // Auto reconnect (SSE does this automatically, but we update UI)
+                setTimeout(() => {
+                    console.log('[SSE] Attempting to reconnect...');
+                }, 3000);
+            };
+        }
+
+        // Connect to SSE on page load
+        connectSSE();
+    </script>
+</body>
+</html>
